@@ -6,90 +6,118 @@ pipeline {
 
     //defining common variables.
     environment {
-        JOB_OWNER_CHANNEL = "alert-analytics-eng"
-
+        JOB_OWNER_CHANNEL = "ae-alert"
         REPO_NAME = "fr-analytics-engines-infra"
-    }
-
-    //parameters.
-    parameters {
-        choice(name: 'TARGET_ALGO',
-               choices: ['', 'salesmodel', 'colorsize', 'invopt'],
-               description: 'Select target') 
     }
 
     stages {
         stage ('Initialize') {
             steps {
                 cleanWs()
-            }
-        }
-
-        stage('Confirme') {
-            steps {
                 checkout scm: [
-                    $class: 'GitSCM', branches: [[name: GIT_COMMIT]],
-                    userRemoteConfigs: [[credentialsId: 'analytics-engines-deployment-account', url: GIT_URL]]
+                    $class: 'GitSCM', branches: [[name: "develop-nttd-yamada-applytest"]],
+                    userRemoteConfigs: [[credentialsId: 'analytics-engines-deployment-account', url: "https://github.com/fastretailing/fr-analytics-engines-infra"]]
                 ]
-
-                sh """
-                    set -xe
-
-                    mkdir -p ./"${params.TARGET_ALGO}"
-                    cd ./"${params.TARGET_ALGO}"
-                    echo "terraform apply!!!!"
-
-                """
             }
         }
-        stage('Execute') {
+
+        stage('prepare') {
             options {
                 timeout(time: 3, unit: 'MINUTES') 
             }
-            when {
-                branch 'master'
-            }
+
             steps {
-                checkout scm: [
-                    $class: 'GitSCM', branches: [[name: GIT_COMMIT]],
-                    userRemoteConfigs: [[credentialsId: 'analytics-engines-deployment-account', url: GIT_URL]]
-                ]
+                script {
+                    algoList = sh(
+                         script: "find . -maxdepth 1 -type d|sed -e '/\\.git/d' -e 's#./##g'"
+                        ,returnStdout: true
+                    )
 
-                sh """
-                    set -xe
+                    algo = input(
+                        id: 'algoInput',
+                        message: '対象アルゴリズムを選択して下さい',
+                        parameters: [
+                            [$class: 'ChoiceParameterDefinition',
+                                name: 'directoryPath',
+                                choices: algoList,
+                                description: 'select deploy target']
+                    ])
 
-                    mkdir -p ./"${params.TARGET_ALGO}"
-                    cd ./"${params.TARGET_ALGO}"
-                    echo "terraform deploy!!!!"
+                    envList = sh(
+                         script: "cd ${algo}/config/fr;find . -maxdepth 1 -type d|sed -e 's#./##g'"
+                        ,returnStdout: true
+                    )
 
-                """
+                    algoenv = input(
+                        id: 'envInput',
+                        message: '実行環境を選択して下さい',
+                        parameters: [
+                            [$class: 'ChoiceParameterDefinition',
+                                name: 'algoEnvPath',
+                                choices: envList,
+                                description: 'select deploy environment']
+                    ])
+                }
+            }
+        }
+        stage('confirm changes') {
+            options {
+                timeout(time: 3, unit: 'MINUTES') 
+            }
+
+            steps {
+                dir("./${algo}") {
+                    sh "pwd"
+                    sh "ls -la"
+                    //sh "terraform init"
+                    //sh "terraform plan -var-file=config/fr/${algoenv}/ap-northeast-1.tfvars"
+                }
+            }
+        }
+        stage('action') {
+
+            steps {
+                input(
+                    id: 'finalconfirm',
+                    message: 'かくにんしましょう',
+                    ok: 'かくにんしたのでじっこうします'
+                )
             }
         }
     }
     post{
+        always {
+            cleanWs()
+        }
         // 成功した時
         success {
-            sendToSlack 'SUCCESS', JOB_OWNER_CHANNEL, "Job result"
+            slackSend (
+                tokenCredentialId: 'analytics-engines-jenkins',
+                baseUrl: "https://fastretailing.slack.com/services/hooks/jenkins-ci/",
+                channel: "${JOB_OWNER_CHANNEL}",
+                color: "#00FF00",
+                message: "The pipeline ${currentBuild.fullDisplayName} completed successfully.")
         }
         // 失敗した時
         failure {
-            sendToSlack 'FAILURE', JOB_OWNER_CHANNEL, "Job result"
-        }
-        // 不安定な時
-        unstable {
-            sendToSlack 'UNSTABLE', JOB_OWNER_CHANNEL, "Job result"
+            slackSend (
+                tokenCredentialId: 'analytics-engines-jenkins',
+                baseUrl: "https://fastretailing.slack.com/services/hooks/jenkins-ci/",
+                channel: "${JOB_OWNER_CHANNEL}",
+                color: "#FF0000",
+                message: "The pipeline ${currentBuild.fullDisplayName} is failure.")
         }
         // 中止した時
         aborted {
-            sendToSlack 'ABORTED', JOB_OWNER_CHANNEL, "Job result"
+            slackSend (
+                tokenCredentialId: 'analytics-engines-jenkins',
+                baseUrl: "https://fastretailing.slack.com/services/hooks/jenkins-ci/",
+                channel: "${JOB_OWNER_CHANNEL}",
+                color: "#FF0000",
+                message: "The pipeline ${currentBuild.fullDisplayName} is aborted.")
         }
     }
     options {
         timeout(time: 30, unit: 'MINUTES')
     }
 }
-
-def getSafeStringOfBranchName(String branch_name){
-    return branch_name.replaceAll("/","__")
-}
-
