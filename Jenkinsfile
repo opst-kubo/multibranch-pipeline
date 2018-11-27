@@ -44,7 +44,7 @@ pipeline {
         }
         stage('Execute') {
             options {
-                timeout(time: 3, unit: 'MINUTE') 
+                timeout(time: 3, unit: 'MINUTES') 
             }
             when {
                 branch 'master'
